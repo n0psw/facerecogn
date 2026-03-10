@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +22,10 @@ def _ensure_dir(path: Path | str) -> Path:
     target = Path(path)
     target.mkdir(parents=True, exist_ok=True)
     return target
+
+
+def _has_tensorboard() -> bool:
+    return importlib.util.find_spec("tensorboard") is not None
 
 
 def _base_callbacks(out_dir: Path, task_name: str, monitor: str = "val_loss", mode: str = "min", train_cfg: TrainConfig | None = None):
@@ -53,16 +59,22 @@ def _base_callbacks(out_dir: Path, task_name: str, monitor: str = "val_loss", mo
             save_weights_only=False,
             verbose=1,
         ),
-        tf.keras.callbacks.TensorBoard(log_dir=str(tb_log_dir), histogram_freq=1),
         tf.keras.callbacks.CSVLogger(str(csv_log_path), append=False),
     ]
+
+    # TensorBoard is optional in local environments.
+    if _has_tensorboard():
+        callbacks.append(tf.keras.callbacks.TensorBoard(log_dir=str(tb_log_dir), histogram_freq=1))
+    else:
+        warnings.warn("TensorBoard package is not installed; skipping TensorBoard callback.", RuntimeWarning)
+
     return callbacks
 
 
-def train_age_gender(model, train_ds, val_ds, out_dir: str) -> tf.keras.callbacks.History:
+def train_age_gender(model, train_ds, val_ds, out_dir: str, train_cfg: TrainConfig | None = None) -> tf.keras.callbacks.History:
     """Compile and train the age+gender multi-output model."""
 
-    cfg = TrainConfig()
+    cfg = train_cfg or TrainConfig()
     out_path = _ensure_dir(out_dir)
 
     model.compile(
@@ -104,10 +116,10 @@ def _emotion_class_weights_from_dataset(train_ds, num_classes: int = 7) -> dict[
     return weight_map
 
 
-def train_emotion(model, train_ds, val_ds, out_dir: str) -> tf.keras.callbacks.History:
+def train_emotion(model, train_ds, val_ds, out_dir: str, train_cfg: TrainConfig | None = None) -> tf.keras.callbacks.History:
     """Compile and train the FER emotion model."""
 
-    cfg = TrainConfig()
+    cfg = train_cfg or TrainConfig()
     out_path = _ensure_dir(out_dir)
 
     model.compile(

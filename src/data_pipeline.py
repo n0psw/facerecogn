@@ -16,7 +16,9 @@ from src.config import AGE_BINS, SEED
 
 
 AUTOTUNE = tf.data.AUTOTUNE
-_VALID_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
+# Some UTKFace mirrors include files ending with ".chip" or double suffixes like
+# ".jpg.chip.jpg". Keep ".chip" for compatibility; images are still validated by PIL.
+_VALID_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".chip"}
 _UTKFACE_NAME_RE = re.compile(r"^(\d{1,3})_(\d)_(\d)_.+")
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -11,31 +12,57 @@ from src.config import AGE_GROUP_LABELS, EMOTION_LABELS, GENDER_LABELS, TrainCon
 from src.types import FaceBox, FacePrediction
 
 
-def load_detector() -> object:
-    """Create and return MediaPipe face detector."""
+def _load_mediapipe_detector(cfg: TrainConfig) -> dict[str, Any]:
+    import mediapipe as mp
+
+    if hasattr(mp, "solutions") and hasattr(mp.solutions, "face_detection"):
+        detector = mp.solutions.face_detection.FaceDetection(
+            model_selection=0,
+            min_detection_confidence=cfg.detector_confidence,
+        )
+        return {"backend": "mediapipe", "detector": detector}
 
     try:
-        import mediapipe as mp
-    except ImportError as exc:
-        raise ImportError("mediapipe is not installed. Run: pip install mediapipe") from exc
+        from mediapipe.python.solutions.face_detection import FaceDetection
+
+        detector = FaceDetection(
+            model_selection=0,
+            min_detection_confidence=cfg.detector_confidence,
+        )
+        return {"backend": "mediapipe", "detector": detector}
+    except Exception as exc:
+        raise ImportError("Mediapipe face detection API is unavailable.") from exc
+
+
+def _load_opencv_haar_detector() -> dict[str, Any]:
+    cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+    detector = cv2.CascadeClassifier(str(cascade_path))
+    if detector.empty():
+        raise ImportError(f"Failed to load OpenCV Haar cascade: {cascade_path}")
+    return {"backend": "opencv_haar", "detector": detector}
+
+
+def load_detector() -> object:
+    """Create and return a face detector.
+
+    Priority:
+    1) MediaPipe (if available and compatible)
+    2) OpenCV Haar cascade fallback
+    """
 
     cfg = TrainConfig()
-    return mp.solutions.face_detection.FaceDetection(
-        model_selection=0,
-        min_detection_confidence=cfg.detector_confidence,
-    )
+
+    try:
+        return _load_mediapipe_detector(cfg)
+    except Exception:
+        return _load_opencv_haar_detector()
 
 
-def detect_faces_bgr(image: np.ndarray, detector) -> list[FaceBox]:
-    """Detect faces in BGR image and return absolute pixel boxes."""
-
-    if image is None or image.size == 0:
-        return []
-
+def _detect_faces_mediapipe(image: np.ndarray, detector_obj) -> list[FaceBox]:
     h, w = image.shape[:2]
     rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = detector.process(rgb)
-    detections = []
+    results = detector_obj.process(rgb)
+    detections: list[FaceBox] = []
     if not results.detections:
         return detections
 
@@ -49,6 +76,39 @@ def detect_faces_bgr(image: np.ndarray, detector) -> list[FaceBox]:
             continue
         detections.append(FaceBox(x1=x1, y1=y1, x2=x2, y2=y2, score=float(det.score[0])))
     return detections
+
+
+def _detect_faces_opencv_haar(image: np.ndarray, detector_obj) -> list[FaceBox]:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    boxes = detector_obj.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+    detections: list[FaceBox] = []
+    for (x, y, w, h) in boxes:
+        x1 = int(max(0, x))
+        y1 = int(max(0, y))
+        x2 = int(max(0, x + w))
+        y2 = int(max(0, y + h))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        detections.append(FaceBox(x1=x1, y1=y1, x2=x2, y2=y2, score=1.0))
+    return detections
+
+
+def detect_faces_bgr(image: np.ndarray, detector) -> list[FaceBox]:
+    """Detect faces in BGR image and return absolute pixel boxes."""
+
+    if image is None or image.size == 0:
+        return []
+
+    if isinstance(detector, dict):
+        backend = detector.get("backend")
+        detector_obj = detector.get("detector")
+        if backend == "mediapipe":
+            return _detect_faces_mediapipe(image, detector_obj)
+        if backend == "opencv_haar":
+            return _detect_faces_opencv_haar(image, detector_obj)
+
+    # Backward compatibility with old direct MediaPipe detector object.
+    return _detect_faces_mediapipe(image, detector)
 
 
 def _predict_age_gender(face_rgb: np.ndarray, ag_model):
