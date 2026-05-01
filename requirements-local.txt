@@ -1,6 +1,9 @@
 tensorflow
 mediapipe
 opencv-python-headless
+streamlit
+streamlit-webrtc
+av
 scikit-learn
 pandas
 numpy
